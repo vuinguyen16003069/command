@@ -1,75 +1,82 @@
 module.exports.config = {
   name: 'menu',
-  version: '2.1.0',
+  version: '3.0.0',
   hasPermssion: 0,
-  credits: 'DC-Nam mod by Vtuan + Kiên (tối ưu bởi ChatGPT)',
-  description: 'Xem toàn bộ danh sách lệnh bot đẹp',
-  commandCategory: 'Danh sách lệnh',
+  credits: 'DC-Nam mod by Vtuan + Kiên (tối ưu bởi ChatGPT & Grok)',
+  description: 'Xem danh sách lệnh bot',
+  commandCategory: 'Nhóm',
   usages: '[all|per <quyền>|tên lệnh]',
   cooldowns: 5,
   envConfig: {
     autoUnsend: { status: true, timeOut: 60 },
     sendAttachments: {
-      status: true,
       random: true,
-      url: [
-        'https://files.catbox.moe/qof2fm.png'
-      ]
+      url: ['https://files.catbox.moe/qof2fm.png']
     }
   }
 };
 
 const { findBestMatch } = require('string-similarity');
+const axios = require('axios');
+const { autoUnsend = module.exports.config.envConfig.autoUnsend, sendAttachments = module.exports.config.envConfig.sendAttachments } = global.config?.menu || {};
+const FALLBACK_IMAGE_URL = 'https://files.catbox.moe/qof2fm.png';
 
-const { autoUnsend, sendAttachments } =
-  global.config?.menu ?? module.exports.config.envConfig;
-
-// ---- Hàm lấy ảnh từ config ----
+// --- Stream ảnh từ URL ---
 async function getAttachment() {
-  if (!sendAttachments?.status || !Array.isArray(sendAttachments.url) || !sendAttachments.url.length) {
-    return null;
-  }
+  const urls = Array.isArray(sendAttachments.url) && sendAttachments.url.length ? sendAttachments.url : [FALLBACK_IMAGE_URL];
+  const selectedUrl = sendAttachments.random ? urls[Math.floor(Math.random() * urls.length)] : urls[0];
+
   try {
-    const urls = sendAttachments.url;
-    const url = sendAttachments.random
-      ? urls[Math.floor(Math.random() * urls.length)]
-      : urls[0];
-    return await global.utils.getStreamFromURL(url);
-  } catch {
-    return null;
+    const response = await axios.get(selectedUrl, { responseType: 'stream' });
+    return response.data;
+  } catch (err) {
+    console.error('Lỗi khi stream ảnh:', err.message);
+    try {
+      const fallbackResponse = await axios.get(FALLBACK_IMAGE_URL, { responseType: 'stream' });
+      return fallbackResponse.data;
+    } catch (fallbackErr) {
+      console.error('Lỗi khi stream ảnh dự phòng:', fallbackErr.message);
+      return null;
+    }
   }
 }
 
-// ---- Hàm gửi tin nhắn kèm auto unsend + ảnh ----
-async function sendMenuMessage(api, content, tid, mid, sid, dataForReply) {
-  const { sendMessage: send, unsendMessage: un } = api;
+// --- Gửi tin nhắn kèm ảnh + auto unsend ---
+async function sendMessageWithAttachment(api, content, tid, mid, sid, dataForReply, replyCase = 'infoGr') {
+  const payload = { body: content };
+  try {
+    const attach = await getAttachment();
+    if (attach) payload.attachment = attach;
+  } catch (err) {
+    console.error('Lỗi khi tải attachment:', err);
+  }
 
-  let payload = { body: content };
-  const attach = await getAttachment();
-  if (attach) payload.attachment = attach;
+  api.sendMessage(payload, tid, (err, info) => {
+    if (err) return console.error('Lỗi khi gửi tin nhắn:', err);
 
-  send(payload, tid, (err, info) => {
-    if (err) return console.log(err);
-
-    if (Array.isArray(global.client.handleReply)) {
+    if (dataForReply) {
       global.client.handleReply.push({
         name: module.exports.config.name,
         messageID: info.messageID,
         author: sid,
-        case: 'infoGr',
+        case: replyCase,
         data: dataForReply
       });
     }
 
-    if (autoUnsend?.status) {
+    if (autoUnsend.status) {
       setTimeout(() => {
-        try { un(info.messageID); } catch { }
+        try {
+          api.unsendMessage(info.messageID);
+        } catch (err) {
+          console.error('Lỗi khi xóa tin nhắn:', err);
+        }
       }, 1000 * (autoUnsend.timeOut || 60));
     }
   }, mid);
 }
 
-// --- Hàm lấy prefix thread ---
+// --- Lấy prefix thread ---
 function prefix(threadID) {
   const tidData = global.data.threadData.get(threadID) || {};
   return tidData.PREFIX || global.config.PREFIX;
@@ -78,21 +85,18 @@ function prefix(threadID) {
 // --- Hiển thị info lệnh ---
 function infoCmds(a, threadID) {
   const pre = prefix(threadID);
-  return `『 ${a.name} 』\n
-➜ Phiên bản : ${a.version}
-➜ Quyền hạn : ${premssionTxt(a.hasPermssion)}
-➜ Tác giả : ${a.credits}
-➜ Mô tả : ${a.description}
-➜ Thuộc nhóm : ${a.commandCategory}
-➜ Cách dùng : ${pre}${a.usages}
-➜ Thời gian chờ : ${a.cooldowns} giây`;
+  return `『 ${a.name} 』
+➜ Ver: ${a.version}
+➜ Quyền: ${premssionTxt(a.hasPermssion)}
+➜ Tác giả: ${a.credits}
+➜ Mô tả: ${a.description}
+➜ Nhóm: ${a.commandCategory}
+➜ Dùng: ${pre}${a.usages}
+➜ Chờ: ${a.cooldowns}s`;
 }
 
 function premssionTxt(a) {
-  return a === 0 ? 'Thành Viên'
-    : a === 1 ? 'Quản Trị Viên Nhóm'
-      : a === 2 ? 'Người Điều Hành Bot'
-        : 'ADMINBOT';
+  return a === 0 ? 'Thành Viên' : a === 1 ? 'QTV Nhóm' : a === 2 ? 'Người Điều Hành' : 'ADMINBOT';
 }
 
 // --- Lọc commands ---
@@ -114,7 +118,7 @@ function commandsGroup(isAdmin) {
   const array = [], cmds = filterCommands(global.client.commands.values(), isAdmin);
   for (const cmd of cmds) {
     const { name, commandCategory } = cmd.config;
-    const find = array.find(i => i.commandCategory == commandCategory);
+    const find = array.find(i => i.commandCategory === commandCategory);
     !find
       ? array.push({ commandCategory, commandsName: [name] })
       : find.commandsName.push(name);
@@ -123,110 +127,87 @@ function commandsGroup(isAdmin) {
   return array;
 }
 
+// --- Lệnh chính ---
 module.exports.run = async function ({ api, event, args }) {
   const { threadID: tid, messageID: mid, senderID: sid } = event;
   const cmds = global.client.commands;
   const isAdmin = global.config?.ADMINBOT?.includes(sid);
 
+  // --- Xử lý tìm kiếm lệnh ---
+  if (args.length >= 1 && !['all', 'per'].includes(args[0]) && isNaN(args[1])) {
+    const commandNames = Array.from(cmds.keys());
+    const { bestMatch } = findBestMatch(args.join(' '), commandNames);
+    if (bestMatch.rating > 0.5) {
+      const cmd = cmds.get(bestMatch.target);
+      return sendMessageWithAttachment(api, infoCmds(cmd.config, tid), tid, mid, sid, null, null);
+    }
+    return api.sendMessage(`Không tìm thấy "${args.join(' ')}". Ý bạn là "${bestMatch.target}"?`, tid, mid);
+  }
+
   if (args.length >= 1) {
     if (args[0] === 'per' && !isNaN(args[1])) {
       const permissionLevel = parseInt(args[1]);
       const filteredCmds = filterCommandsByPermission(cmds.values(), permissionLevel);
-      let txt = `✦════════════════✦
-「 LỆNH THEO QUYỀN ${permissionLevel} 」
-✦════════════════✦\n\n`;
-      filteredCmds.forEach((cmd, i) => txt += `${i + 1}. ${cmd.config.name} | ${cmd.config.description || 'Không có mô tả'}\n`);
-      return sendMenuMessage(api, txt, tid, mid, sid, null);
+      let txt = `✦ LỆNH QUYỀN ${permissionLevel} ✦\n\n`;
+      filteredCmds.forEach((cmd, i) => txt += `${i + 1}. ${cmd.config.name} | ${cmd.config.description || 'N/A'}\n`);
+      txt += `\nTổng: ${filteredCmds.length} lệnh\n🤖 Bot by Kiên`;
+      return sendMessageWithAttachment(api, txt, tid, mid, sid, null, null);
     }
     if (args[0] === 'all') {
       const data = filterCommands(cmds.values(), isAdmin);
-      let txt = `✦════════════════✦
-「 MENU TOÀN BỘ LỆNH 」
-✦════════════════✦\n\n`;
-      data.forEach((cmd, i) => txt += `${i + 1}. ${cmd.config.name} | ${cmd.config.description || 'Không có mô tả'}\n`);
-      txt += `\nTổng: ${data.length} lệnh
-⏰ ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
-『 🤖 Bot by Kiên 』`;
-      return sendMenuMessage(api, txt, tid, mid, sid, null);
+      let txt = `✦ TẤT CẢ LỆNH ✦\n\n`;
+      data.forEach((cmd, i) => txt += `${i + 1}. ${cmd.config.name} | ${cmd.config.description || 'N/A'}\n`);
+      txt += `\nTổng: ${data.length} lệnh\n⏰ ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}\n🤖 Bot by Kiên`;
+      return sendMessageWithAttachment(api, txt, tid, mid, sid, null, null);
     }
   }
 
-  // Hiển thị menu nhóm đẹp
+  // --- Menu nhóm (ngắn gọn cho mobile) ---
   const data = commandsGroup(isAdmin);
   const totalCmds = data.reduce((acc, cur) => acc + cur.commandsName.length, 0);
   const emojis = ["🌸", "🔥", "⚡", "🍀", "🌙", "⭐", "🎶", "🌀", "💎", "🐉"];
   const pick = () => emojis[Math.floor(Math.random() * emojis.length)];
   const vnTime = new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
 
-  let txt = `╔✦════════════════════════✦╗
-   🌸  MENU BOT 🌸
-   ⏰ ${vnTime}
-╚✦════════════════════════✦╝\n\n`;
+  let txt = `🌸 MENU BOT 🌸\n⏰ ${vnTime}\n\n`;
+  data.forEach((grp, i) => txt += `${pick()} ${i + 1}. ${grp.commandCategory} (${grp.commandsName.length})\n`);
+  txt += `\nTổng: ${totalCmds} lệnh\nReply 1-${data.length}\n🤖 Bot by Kiên\nThả 😾 để gỡ!`;
 
-  data.forEach((grp, i) => txt += `${pick()} ${i + 1}. ${grp.commandCategory} — ${grp.commandsName.length} lệnh\n`);
-
-  txt += `\n╠✦════════════════════════✦╣
-📌 Tổng: ${totalCmds} lệnh
-👉 Reply từ 1 → ${data.length} để chọn nhóm
-『 🤖 Bot by Kiên ✨ 』
-➜ Thả icon 😾 để bot gỡ menu ngay!
-╚✦════════════════════════✦╝`;
-
-  return sendMenuMessage(api, txt, tid, mid, sid, data);
+  return sendMessageWithAttachment(api, txt, tid, mid, sid, data);
 };
 
+// --- Xử lý reply ---
 module.exports.handleReply = async function ({ handleReply: $, api, event }) {
-  const { sendMessage: send, unsendMessage: un } = api;
   const { threadID: tid, messageID: mid, senderID: sid, args } = event;
-  if (sid != $.author) return send("Đi ra chỗ khác chơi 🥹", tid, mid);
+  if (sid !== $.author) return api.sendMessage("Đi ra chỗ khác chơi 🥹", tid, mid);
+
+  const argNum = parseInt(args[0]);
+  if (isNaN(argNum) || argNum < 1 || argNum > $.data.length) {
+    return api.sendMessage(`Nhập số từ 1 đến ${$.data.length}`, tid, mid);
+  }
 
   switch ($.case) {
     case 'infoGr': {
-      const data = $.data[(+args[0]) - 1];
-      if (!data) return send(`"${args[0]}" không nằm trong menu`, tid, mid);
-      try { un($.messageID); } catch { }
+      const data = $.data[argNum - 1];
+      try { api.unsendMessage($.messageID); } catch (err) { console.error('Lỗi xóa tin:', err); }
 
       const emojis = ["🌸", "🔥", "⚡", "🍀", "🌙", "⭐", "🎶", "🌀", "💎", "🐉"];
       const pick = () => emojis[Math.floor(Math.random() * emojis.length)];
       const vnTime = new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
 
-      let txt = `╔✦════════════════════════✦╗
-   🌸  ${data.commandCategory}  🌸
-   ⏰ ${vnTime}
-╚✦════════════════════════✦╝\n\n`;
-
+      let txt = `🌸 ${data.commandCategory} 🌸\n⏰ ${vnTime}\n\n`;
       data.commandsName.forEach((name, i) => txt += `${pick()} ${i + 1}. ${name}\n`);
+      txt += `\nReply 1-${data.commandsName.length}\n🤖 Bot by Kiên`;
 
-      txt += `\n╠✦════════════════════════✦╣
-👉 Reply từ 1 đến ${data.commandsName.length}
-╚✦════════════════════════✦╝`;
-
-      let payload = { body: txt };
-      const attach = await getAttachment();
-      if (attach) payload.attachment = attach;
-
-      send(payload, tid, (a, b) => {
-        global.client.handleReply.push({
-          name: module.exports.config.name,
-          messageID: b.messageID,
-          author: sid,
-          case: 'infoCmds',
-          data: data.commandsName
-        });
-        if (autoUnsend?.status) setTimeout(v1 => un(v1), 1000 * autoUnsend.timeOut, b.messageID);
-      }, mid);
-    }; break;
+      return sendMessageWithAttachment(api, txt, tid, mid, sid, data.commandsName, 'infoCmds');
+    }
 
     case 'infoCmds': {
-      const cmd = global.client.commands.get($.data[(+args[0]) - 1]);
-      if (!cmd) return send(`"${args[0]}" không nằm trong menu`, tid, mid);
-      try { un($.messageID); } catch { }
+      const cmd = global.client.commands.get($.data[argNum - 1]);
+      if (!cmd) return api.sendMessage("Lệnh không tồn tại", tid, mid);
+      try { api.unsendMessage($.messageID); } catch (err) { console.error('Lỗi xóa tin:', err); }
 
-      let payload = { body: infoCmds(cmd.config, tid) };
-      const attach = await getAttachment();
-      if (attach) payload.attachment = attach;
-
-      send(payload, tid, mid);
-    }; break;
+      return sendMessageWithAttachment(api, infoCmds(cmd.config, tid), tid, mid, sid, null, null);
+    }
   }
 };
