@@ -18,7 +18,7 @@ module.exports.run = async function ({ api, event, args }) {
 
   const apikey = "2e0d6409939a436d97392547251709"; 
 
-  const bgURL = "https://i.ibb.co/G3j6CqR/bgweather.jpg";
+  const bgURL = "https://files.catbox.moe/6wzel6.jpg";
 
   // --- Hàm bỏ dấu tiếng Việt ---
   function removeVietnameseTones(str) {
